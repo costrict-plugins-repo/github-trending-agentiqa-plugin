@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# SessionStart hook: auto-installs CLI, Playwright browsers, and checks auth
+set -euo pipefail
+
+messages=()
+
+# ── Agentiqa CLI version awareness ───────────────────────────────────────────
+#
+# The skill's examples call the GLOBAL binary (`agentiqa …`), so "installed" is
+# not the same as "current": this hook used to install only when the binary was
+# missing and never looked again, which let a months-old CLI sit on PATH while
+# the skill documented verbs it does not have. That fails as
+# `unknown … subcommand` / exit 2 — e.g. `agentiqa labels create`, added in
+# 1.1.44 — and reads like a broken tool rather than a stale install.
+#
+# The check must not tax session start (this hook is synchronous), so the
+# registry lookup NEVER runs in the blocking path: the resolved version is
+# cached for 24h and refreshed by a detached child whose result is used by the
+# NEXT session. Steady-state cost is one local `--version` call.
+#
+# It reports, it does not self-upgrade: `npm install -g` on a live session can
+# swap the binary out from under a command the agent is already running.
+#
+# Two separate checks, because they answer different questions:
+#
+#  - REQUIRED MINIMUM (cli-requirements.json → minCliVersion): the oldest CLI that
+#    carries every verb the skills document. Below it, the skill is actively wrong
+#    about the tool on PATH, so this is a blocking-tone message and needs no network
+#    (the number is committed next to the skills that depend on it).
+#  - BEHIND LATEST (npm `latest`, cached 24h): informational, network-dependent, and
+#    deliberately never the load-bearing check — a registry lookup that fails or is
+#    stale must not silence the fact that a documented verb is missing.
+#
+# The minimum lives in ONE place, cli-requirements.json, read by this hook and by
+# scripts/check-skill-cli-freshness.mjs. Bump it there whenever a skill starts
+# documenting a verb an older CLI does not have.
+
+AGENTIQA_CACHE_DIR="${HOME}/.agentiqa"
+AGENTIQA_LATEST_CACHE="${AGENTIQA_CACHE_DIR}/plugin-latest-version"
+AGENTIQA_LATEST_TTL=86400 # 24h — mirrors the CLI's own update-check window
+
+# Plugin root: the host sets CLAUDE_PLUGIN_ROOT / CODEX_PLUGIN_ROOT / PLUGIN_ROOT,
+# but this hook also runs standalone in CI, so fall back to its own location.
+AGENTIQA_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}"
+if [ -z "$AGENTIQA_PLUGIN_ROOT" ] || [ ! -f "${AGENTIQA_PLUGIN_ROOT}/cli-requirements.json" ]; then
+  AGENTIQA_PLUGIN_ROOT="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)" || AGENTIQA_PLUGIN_ROOT=""
+fi
+
+# Read minCliVersion without a jq dependency. Any parse failure yields an empty
+# string, which disables the minimum check rather than inventing a version.
+read_min_cli_version() {
+  local f="${AGENTIQA_PLUGIN_ROOT}/cli-requirements.json"
+  [ -r "$f" ] || return 0
+  sed -n 's/.*"minCliVersion"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' "$f" | head -1
+}
+
+AGENTIQA_MIN_CLI_VERSION="$(read_min_cli_version || true)"
+
+# True when $1 is strictly older than $2, comparing the release triple only (a
+# `1.1.45-staging.abc` build counts as 1.1.45). Non-numeric input → not older,
+# so a version string we cannot parse never produces a bogus nag.
+version_is_older() {
+  local a="${1%%-*}" b="${2%%-*}"
+  local a1 a2 a3 b1 b2 b3
+  IFS=. read -r a1 a2 a3 <<<"$a"
+  IFS=. read -r b1 b2 b3 <<<"$b"
+  for part in "${a1:-x}" "${a2:-0}" "${a3:-0}" "${b1:-x}" "${b2:-0}" "${b3:-0}"; do
+    case "$part" in '' | *[!0-9]*) return 1 ;; esac
+  done
+  a2=${a2:-0} a3=${a3:-0} b2=${b2:-0} b3=${b3:-0}
+  # Explicit returns, never a bare failing test: this runs under `set -e`.
+  if [ "$a1" -ne "$b1" ]; then
+    if [ "$a1" -lt "$b1" ]; then return 0; else return 1; fi
+  fi
+  if [ "$a2" -ne "$b2" ]; then
+    if [ "$a2" -lt "$b2" ]; then return 0; else return 1; fi
+  fi
+  if [ "$a3" -lt "$b3" ]; then return 0; else return 1; fi
+}
+
+# Resolve `latest` in a detached child. Every fd is closed: a background job that
+# inherits this hook's stdout holds the pipe open and stalls session start.
+refresh_latest_cache_detached() {
+  mkdir -p "$AGENTIQA_CACHE_DIR" 2>/dev/null || return 0
+  (
+    v=$(npm view agentiqa version 2>/dev/null) || exit 0
+    case "$v" in '' | *[!0-9.a-zA-Z-]*) exit 0 ;; esac
+    printf '%s %s\n' "$v" "$(date +%s)" >"${AGENTIQA_LATEST_CACHE}.tmp" 2>/dev/null &&
+      mv -f "${AGENTIQA_LATEST_CACHE}.tmp" "$AGENTIQA_LATEST_CACHE" 2>/dev/null
+  ) >/dev/null 2>&1 </dev/null &
+}
+
+# 1. Install the agentiqa CLI when missing; flag it when outdated.
+if ! command -v agentiqa &>/dev/null; then
+  if npm install -g agentiqa@latest &>/dev/null; then
+    messages+=("Agentiqa CLI installed successfully.")
+  else
+    messages+=("⚠️ Could not auto-install agentiqa CLI. Run: npm install -g agentiqa (may need sudo)")
+  fi
+  refresh_latest_cache_detached # seed the cache so the next session can compare
+else
+  installed=$(agentiqa --version 2>/dev/null | head -1 | tr -d '[:space:]') || installed=""
+  cached_version="" cached_at=0
+  if [ -r "$AGENTIQA_LATEST_CACHE" ]; then
+    read -r cached_version cached_at <"$AGENTIQA_LATEST_CACHE" || true
+  fi
+  case "${cached_at:-}" in '' | *[!0-9]*) cached_at=0 ;; esac
+
+  if [ $(($(date +%s) - cached_at)) -ge "$AGENTIQA_LATEST_TTL" ]; then
+    refresh_latest_cache_detached
+  fi
+
+  below_minimum=0
+  if [ -n "$installed" ] && [ -n "$AGENTIQA_MIN_CLI_VERSION" ] &&
+    version_is_older "$installed" "$AGENTIQA_MIN_CLI_VERSION"; then
+    below_minimum=1
+    messages+=("Agentiqa CLI ${installed} is BELOW the ${AGENTIQA_MIN_CLI_VERSION} this plugin's skills require. Verbs they document are missing from your binary and will exit 2 as \`unknown subcommand\` — the project lifecycle verbs (\`agentiqa project create|get|update\`) and, earlier, \`agentiqa labels create\` (1.1.44). Update BEFORE running Agentiqa commands: npm install -g agentiqa@latest")
+  fi
+
+  if [ "$below_minimum" -eq 0 ] && [ -n "$installed" ] && [ -n "$cached_version" ] &&
+    version_is_older "$installed" "$cached_version"; then
+    messages+=("Agentiqa CLI ${installed} is behind ${cached_version}. A stale CLI rejects verbs this skill documents with exit 2 (e.g. \`agentiqa labels create\`, added in 1.1.44). Update before running Agentiqa commands: npm install -g agentiqa@latest")
+  fi
+fi
+
+# 2. Ensure Playwright browsers are installed (Chromium + headless shell)
+if command -v agentiqa &>/dev/null; then
+  # Find the engine-core package that agentiqa uses for Playwright
+  CLI_PATH=$(command -v agentiqa 2>/dev/null)
+  REAL_PATH=$(readlink -f "$CLI_PATH" 2>/dev/null || readlink "$CLI_PATH" 2>/dev/null || echo "$CLI_PATH")
+
+  # Check if Playwright chromium is available by doing a dry-run
+  if ! npx playwright install --dry-run chromium &>/dev/null 2>&1; then
+    # Playwright not found via npx, try installing browsers
+    if npx playwright install chromium &>/dev/null 2>&1; then
+      messages+=("Playwright Chromium installed.")
+    fi
+  fi
+
+  # Also try from the agentiqa engine-core if it exists locally
+  ENGINE_CORE=""
+  if [ -f "${REAL_PATH}" ]; then
+    # Walk up from cli.js to find engine-core
+    CANDIDATE="$(dirname "$(dirname "$(dirname "$REAL_PATH")")")/packages/engine-core"
+    if [ -d "$CANDIDATE" ]; then
+      ENGINE_CORE="$CANDIDATE"
+    fi
+  fi
+
+  if [ -n "$ENGINE_CORE" ] && [ -d "$ENGINE_CORE" ]; then
+    (cd "$ENGINE_CORE" && npx playwright install chromium &>/dev/null 2>&1) || true
+  fi
+fi
+
+# 3. Check authentication and prompt login if needed
+if command -v agentiqa &>/dev/null; then
+  if ! agentiqa whoami &>/dev/null; then
+    messages+=("Agentiqa requires authentication. Running 'agentiqa login'...")
+    if agentiqa login 2>/dev/null; then
+      messages+=("Agentiqa login successful.")
+    else
+      messages+=("⚠️ Agentiqa login failed or timed out. Run manually: agentiqa login")
+    fi
+  fi
+fi
+
+# If nothing to report, exit silently
+if [ ${#messages[@]} -eq 0 ]; then
+  echo '{}'
+  exit 0
+fi
+
+msg=$(printf '%s\n' "${messages[@]}")
+
+escape_for_json() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+escaped=$(escape_for_json "$msg")
+
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  # Claude Code format
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
+elif [ -n "${CODEX_PLUGIN_ROOT:-}" ] || [ -n "${PLUGIN_ROOT:-}" ]; then
+  # Codex format
+  printf '{\n  "additionalContext": "%s"\n}\n' "$escaped"
+else
+  # Fallback (Cursor, etc.)
+  printf '{\n  "additional_context": "%s"\n}\n' "$escaped"
+fi
+
+exit 0

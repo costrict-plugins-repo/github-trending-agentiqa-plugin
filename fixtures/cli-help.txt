@@ -1,0 +1,503 @@
+Agentiqa CLI
+AI-powered testing for web apps.
+
+Usage:
+  agentiqa explore "<prompt>" [flags]
+  agentiqa run [--project <id|name>] [flags]
+  agentiqa project <list | use <id|name> | current | get <id|name> | create --url <url> | update <id|name> | permissions | files <verb> | memory <verb> | credentials <verb> | pool <verb>> [--project <id|name>] [--json]
+  agentiqa plan <list | get <id> | save --file <path> | delete <id> --yes> [--if-exists] [--json]
+  agentiqa runs <get <plan-id | run-id | run-url> | wait <run-id | run-url>> [--limit <n>] [--timeout <sec>] [--steps] [--json]
+  agentiqa labels <list | create <name> | update <id> | delete <id>> [--name <name>] [--color <#rrggbb>] [--json]
+  agentiqa review <--head <sha> --batch <id[,id]> | --head <sha> --dry-run [--since <sha>] [--plans-file <plans.json>] | --evidence <bundle.json> --dry-run | collect --head <sha> --batch <id[,id]> --out <file> | check [--batch <id|latest>] [--head <sha>] | list | show <proposalId> | approve <proposalId> --revision <n> [--accept-weakening] | reject <proposalId> | trace <trace.json|->> [--json]
+  agentiqa login [--api-url <url>] [--no-browser]
+  agentiqa logout
+  agentiqa whoami
+
+Commands:
+  explore  Test a web app with an AI agent
+  run      Execute saved test plans
+  project  Manage projects, project files, memory, personal credentials, and shared credential pools
+  plan     List, show, save (create/edit), or delete test plans
+  runs     Read run verdicts/history for a saved plan, inspect a specific run, or wait for a run to finish
+  labels   List, create, rename, or delete the project's labels
+  review   Review a CI batch against the code that changed: propose test updates, flag regressions
+  login    Authenticate with Agentiqa (opens browser)
+  logout   Remove stored credentials
+  whoami   Show the current authenticated user
+
+Explore flags:
+  --url <url>                Web URL to test. Optional when logged in with a single project
+                             — the CLI reuses that project's URL.
+  --feature <text>           What was built, from the user's perspective.
+  --hint <text>              A specific thing to test. (repeatable)
+  --known-issue <text>       Something the agent should NOT report. (repeatable)
+  --credential <name:secret> A login credential to hand the agent. (repeatable)
+  --model <provider:model>   LLM to drive the whole stack (coordinator + agent). Providers:
+                             google | anthropic | openai. "openai" is any
+                             OpenAI-chat-completions-compatible endpoint — OpenAI, Azure
+                             Foundry, OpenRouter, vLLM, self-hosted (point OPENAI_BASE_URL
+                             at it). Omit to use the default managed Google model (available
+                             on every plan). A non-Google model is BYOK (bring your own
+                             key/model), which is COMPANY-PLAN-ONLY: the CLI verifies your
+                             account's entitlement before honoring it and needs that
+                             provider's key (see Environment variables below).
+  --dry-run                  Check the engine and exit without running the agent.
+  --no-artifacts             Don't save screenshots/video to the temp directory.
+  --verbose                  Show raw observations and actions.
+  --auto-approve             Auto-approve scope and plan checkpoints (required for
+                             non-interactive runs).
+  --embedded                 Force the in-process embedded engine instead of the env-matched
+                             hosted engine an authenticated service-key explore now defaults
+                             to. Embedded runs execute locally: Chromium and ffmpeg are
+                             provisioned on first use (installing the CLI downloads
+                             neither), and a run whose ffmpeg provisioning fails proceeds
+                             without video. Use for offline/local execution or
+                             BYOK-on-embedded (a self-provided GEMINI_API_KEY / non-Google
+                             COORDINATOR_MODEL). Ignored when --engine <url> is given.
+  --json                     Emit machine-readable JSON on stdout (schemaVersion 1).
+  --format <text|json>       Explicit output format; overrides the AG_OUTPUT env var.
+
+Run flags:
+  --url <url>                Target URL (required with --plan; deprecated in project mode).
+  --plan <path>              Path to a local test plan JSON. Omit it to run the saved plans
+                             of a project instead.
+  --project <id|name>        Project whose saved plans to run — an exact id, or a unique
+                             case-insensitive name. Overrides AGENTIQA_PROJECT_ID and the
+                             project remembered by `agentiqa project use`. Ignored (and
+                             rejected on conflict) when AGENTIQA_SERVICE_KEY is set, since a
+                             service key is already scoped to one project.
+  --plan-id <id[,id]>        Run saved plans by id (project mode): one id, or a
+                             comma-separated list. Every id must exist in the project.
+  --label-ids <a,b,c>        Run every plan tagged with any of these labels (csv, project
+                             mode).
+  --label-id <id>            Alias for --label-ids. (deprecated)
+  --mode <sequential|parallel>
+                             Execution order for the selected plans (default: sequential).
+  --artifacts-dir <path>     Directory for run artifacts (default: a temp directory).
+  --no-artifacts             Don't save video/frame artifacts.
+  --share                    DEPRECATED no-op, accepted so existing CI invocations keep
+                             working. Public share links were retired 2026-07 in favor of
+                             org-member team access: the run deep link is always available
+                             as runUrl in the JSON envelope and printed in human output.
+                             Whoever you send it to needs an Agentiqa login in the run
+                             owner's organization.
+  --embedded                 Force the in-process embedded engine instead of the env-matched
+                             hosted engine an authenticated run now defaults to. Embedded
+                             runs execute locally and do NOT persist to your account (no
+                             runUrl, no server-side video). Use for offline/local execution
+                             or BYOK-on-embedded (a self-provided GEMINI_API_KEY /
+                             non-Google COORDINATOR_MODEL). Ignored when --engine <url> is
+                             given.
+
+Project flags:
+  --text <text>              Memory add/update text. Memory verbs: list, add, update <id>,
+                             remove <id>, archive <id>, restore <id>, pin <id>, unpin <id>.
+                             Writes require the project owner.
+  --file <path|->            Memory add/update: read text from a file, or stdin with -.
+                             Mutually exclusive with --text.
+  --category <category>      Memory add/update category. An empty string clears it; omission
+                             preserves the stored category.
+  --include-archived         Memory list: include archived items.
+  --login <login>            Credentials/pool add or update: sign-in login. Credentials
+                             verbs: list, add, update <id>, remove <id>. Pool additionally
+                             supports release <id>. Personal credentials belong only to the
+                             caller; pool writes require a Company project owner or org
+                             admin.
+  --secret-stdin             Credentials/pool add or update: read the secret from stdin (one
+                             trailing newline is removed). Alternatively set
+                             AGENTIQA_CREDENTIAL_SECRET. Secrets are never accepted on argv.
+                             Pool updates require a replacement secret.
+  --reveal                   Credentials list only: include the caller’s personal plaintext
+                             secrets. Default output (including JSON) redacts secrets; pool
+                             secrets are never revealed.
+  --yes                      Confirm memory/credentials/pool/files remove. Also requires
+                             explicit --project <exact-project-id> and an exact item id.
+  --if-exists                With resource remove --yes: succeed with found:false when the
+                             item is absent from this project and account.
+  --rename-on-conflict       With `project files add <path>…`: when a file of the same name
+                             already exists (409), automatically upload under the server’s
+                             suggested alternative name.
+  --clear                    With `project use`: forget the remembered project.
+  --archived                 With `project list`: include archived (soft-deleted) projects
+                             and show the ARCHIVED column. Requires the server-side archived
+                             listing (`?includeDeleted=1`); a control plane without it exits
+                             3 `archived_listing_unsupported` rather than reporting a
+                             live-only list as complete.
+  --url <url>                Target URL. Required by `project create` (the project name is
+                             derived from its host when --name is omitted); on `project
+                             update` it retargets the project, e.g. after a preview deploy.
+  --name <name>              Project name on create/update, or credential role/name on
+                             credentials/pool add/update. Project names are unique per
+                             owner, case-insensitively.
+  --clear-url                With `project update`: store an EXPLICIT empty default URL.
+                             Mutually exclusive with --url; omitting both preserves the
+                             stored URL.
+  --persist-browser-profile <true|false>
+                             Keep the browser profile (cookies, storage) between runs of
+                             this project. Omitted on `update` = preserved.
+  --org-shared <true|false>  Share this project with your organization. Requires an active
+                             Company-plan org — without one the server keeps the project
+                             private and the CLI exits 2 `org_sharing_unavailable` rather
+                             than reporting a success.
+  --review-instructions <file>
+                             With `project update`: the review instructions for the nightly
+                             QA review, read from a file (`-` reads stdin; an empty file
+                             clears the text). At most 4000 characters, checked before any
+                             request. Any member who can open the project may change them;
+                             CI keys cannot. With `project get` it takes no value (put it
+                             after the project): print only the current text, so it can be
+                             edited and passed back with `update --review-instructions -`.
+  --review-cards <kinds|all> With `project update`: the review card kinds to SHOW,
+                             comma-separated from `update`, `possible_bug`, `add_test`, or
+                             `all`. The kinds not listed are turned off. Omitted =
+                             preserved.
+  --review-max-cards <n|none>
+                             With `project update`: at most n review cards a night (1–30);
+                             `none` removes the cap. Omitted = preserved.
+  --if-not-exists            With `project create`: a name collision is not an error — the
+                             existing project is returned with `created: false` and exit 0,
+                             so a retried CI job never mints a twin.
+  --expected-updated-at <iso>
+                             With `project update`: opt-in optimistic concurrency. When the
+                             stored `updatedAt` differs, the write is refused with exit 2
+                             `stale_write` instead of overwriting a concurrent edit.
+  --project <id|name>        Project selector for permissions and resource commands, or the
+                             selection to report for current. Overrides AGENTIQA_PROJECT_ID
+                             and the remembered project. Resource removal requires an
+                             explicit exact project id.
+  --json                     Emit the standard JSON envelope on stdout. Every project verb
+                             adds `target: { apiBase, env, projectId, name }`. Payloads:
+                             `projects` + `selected` (list) / `project` (use) / `projectId`
+                             + `name` + `source` + `valid` (current) / `project` + `access`
+                             + `archived` + `activeRuns` (get) / `project` + `created`
+                             (create) / `project` + `updated` (update; with a review flag
+                             also `reviewInstructions: { version, unchanged }`, and
+                             `updated` is false when only review flags were given). `get`
+                             adds `reviewInstructions` (the version in force, or null for
+                             none); the key is absent when it could not be read. Failures
+                             carry a stable `error.code`, plus `existing` on a name conflict
+                             and `candidates` on an unmatched selector.
+
+Plan flags:
+  --project <id|name>        Project to operate in — an exact id, or a unique
+                             case-insensitive name. Overrides AGENTIQA_PROJECT_ID and the
+                             project remembered by `agentiqa project use`. Ignored (and
+                             rejected on conflict) when AGENTIQA_SERVICE_KEY is set, since a
+                             service key is already scoped to one project.
+  --file <path>              TestPlanV2 JSON to upsert with `plan save`: creates when it has
+                             no id (a `tp_<uuid>` is minted), edits in place when it does. A
+                             non-empty `title` is always required. On EDIT, top-level fields
+                             you omit are preserved from the stored plan (only fields
+                             present in your JSON change; send an explicit `null` or `[]` to
+                             clear one), and `steps` is always taken from your JSON. Accepts
+                             a bare plan object or the `{ plan }` envelope `plan get --json`
+                             emits; use `-` to read from stdin (so `plan get --json | plan
+                             save --file -` round-trips). Field values are sent as-is — the
+                             server owns all save normalization.
+  --yes                      Confirm `plan delete <id>`. Required to delete a saved test
+                             plan.
+  --if-exists                With `plan delete <id> --yes`: succeed with `found: false`
+                             (exit 0) when the plan is already absent.
+  --json                     Emit the standard JSON envelope on stdout: `plans` is a
+                             TestPlanV2 array (list) / `plan` is a TestPlanV2 object (get) /
+                             `plan` + `lintWarnings` is the saved plan and its lint warnings
+                             (save) / `id` + `found` + `deleted` (delete).
+
+Runs flags:
+  --project <id|name>        Project to operate in — an exact id, or a unique
+                             case-insensitive name. Overrides AGENTIQA_PROJECT_ID and the
+                             project remembered by `agentiqa project use`.
+  --limit <n>                Maximum runs to show, newest first by createdAt (default: 5).
+  --timeout <sec>            With `runs wait <run-id | run-url>`: maximum seconds to wait
+                             for the run to reach a terminal status before exiting 3
+                             (default: 600).
+  --steps                    Show detailed step results with criteria (expected/actual) and
+                             screenshot URLs (text mode).
+  --json                     Emit the standard JSON envelope on stdout: `runs` is a
+                             TestPlanV2Run array (newest first, limit applied) and `issues`
+                             is the bugs discovered for this plan; or `run` for an
+                             individual run (`runs get` / `runs wait`).
+
+Labels flags:
+  --project <id|name>        Project to operate in — an exact id, or a unique
+                             case-insensitive name. Overrides AGENTIQA_PROJECT_ID and the
+                             project remembered by `agentiqa project use`.
+  --name <name>              New label name for `labels update <id>`.
+  --color <#rrggbb>          Label color (6-digit hex) for `labels create` / `labels
+                             update`. Defaults to the first unused palette color on create,
+                             and is left unchanged on update.
+  --json                     Emit the standard JSON envelope on stdout: `labels` is an array
+                             of { id, name, color } (list) / `label` is the saved { id,
+                             name, color } (create, update) / `deleted` + `detachedPlanIds`
+                             is the removed label and the plans it was detached from
+                             (delete).
+
+Review flags:
+  --head <sha>               The commit the batch tested (full 40-hex sha). It must exist in
+                             the repository at --repo-path. `review check`: optional; the
+                             pull-request check then asks GitHub for that commit's pull
+                             requests, like the review.
+  --batch <id[,id]>          The batch to review (`batchRunId` from the `run --json`
+                             envelope or last-batch.json), then optionally the same-job
+                             rerun batch that confirms regressions. Without it the review is
+                             code-only: the code merged since the last code-only review of
+                             this repo and branch (else --since) against every saved plan,
+                             with no runs (a dry run in this version). A batch review, saved
+                             or dry, sends one copy of the review to the Agentiqa team (what
+                             it holds: --dry-run). `review check --batch <id|latest>`: check
+                             that batch (`latest`: the newest finished batch of the project
+                             that holds a run).
+  --project <id|name>        Project of the batch. Overrides AGENTIQA_PROJECT_ID and the
+                             project remembered by `agentiqa project use`; a service key is
+                             already scoped to one project.
+  --repo <owner/name>        Repository the review is recorded under, and whose pull
+                             requests it reads when GITHUB_TOKEN is set. Default:
+                             GITHUB_REPOSITORY, else the `origin` remote of --repo-path.
+  --branch <name>            Branch the review is recorded under. Required unless
+                             GITHUB_REF_NAME is set.
+  --since <sha>              Bootstrap base (full sha) for plans no earlier review covered.
+                             Without it such a plan is a usage error (exit 2).
+  --repo-path <dir>          Local checkout to read commits and diffs from (read-only git;
+                             default: the current directory). It needs the full history
+                             between each base and --head.
+  --evidence <bundle.json>   Review a saved evidence bundle (from `review collect`) instead
+                             of collecting one. Requires --dry-run and GEMINI_API_KEY; makes
+                             no Agentiqa request at all.
+  --out <file>               Write the review output JSON (proposals, regressions, every
+                             informational bucket). For `review collect`, the evidence
+                             bundle.
+  --summary <file.md>        Write a GitHub-flavored markdown job summary: actionable items
+                             first, the rest collapsed.
+  --trace-out <file>         Also write the review's trace to this local file (JSON, for
+                             diagnosing a review). It shows how the review reached its
+                             cards: changed file paths, commit subjects, pull request
+                             titles, how plans were linked to files, the AI model's
+                             reasoning, what became of each card, and the tokens used.
+                             Secret-looking values are redacted. It holds no whole files,
+                             diffs or prompts (the diff hunks each decision rested on go
+                             only into the copy for the Agentiqa team, never into this
+                             file), and no commit message bodies or pull request
+                             descriptions; it does keep the short texts a check compared,
+                             such as a label before and after. Batch review (--batch or
+                             --evidence) only, live or dry run. A trace that cannot be
+                             written is a warning, never a failed review. Print one with
+                             `review trace`.
+  --trace-hunks              Accepted for compatibility; changes nothing. Every review trace
+                             carries the diff hunks each of its decisions rested on (a claim
+                             about a failed or at-risk step, a decision, a card, a possible
+                             bug): the changed lines as the AI model read them, or the one
+                             commit's change a check compared. Each hunk is stored once,
+                             secret-looking values are redacted, and lines, hunks per
+                             decision and the total are capped. They go only into the copy
+                             of a batch review for the Agentiqa team, saved or dry (read by
+                             the team only, deleted after 30 days): never into what a saved
+                             review adds to your project, --json, --out, --summary or the
+                             --trace-out file. The trace records whether the flag was
+                             passed.
+  --dry-run                  Review without adding anything to your Agentiqa project: no
+                             review row, suggestions, issues or annotations, and no starting
+                             point moves forward. With --batch, one copy of the review goes
+                             to the Agentiqa team so they can check the cards with you, as a
+                             saved batch review also sends after its writes: the cards and
+                             summary a saved review would hold, plus a trace of how the
+                             review reached them (changed file paths, commit subjects, pull
+                             request titles, how plans were linked to files, the AI model's
+                             reasoning, the diff hunks each decision rested on;
+                             secret-looking values redacted; hunks capped). It holds no
+                             whole files or prompts; like a saved card, it can quote the
+                             short text cited as evidence: a changed line, or a sentence
+                             from a commit message, pull request description or code
+                             comment. Only the Agentiqa team reads it, it does not appear in
+                             your project, and it is deleted after 30 days.
+  --label <name[,name]>      Code-only review: only the saved plans with one of these labels
+                             (names or ids). Default: every saved plan of the project.
+  --plans-file <plans.json>  Code-only review: read the plans from a JSON file (an array of
+                             test plans: id, title, steps) instead of the project. Makes no
+                             Agentiqa request; requires --since and GEMINI_API_KEY (or
+                             --detector-only).
+  --manifest <review.json>   Code-only review: the surfaces manifest (app / tester / ignored
+                             globs) to use instead of `.agentiqa/review.json` at --head.
+  --detector-only            Code-only review: only the model-free literal detector (no
+                             model call, no model key needed).
+  --repo-map <auto|survey|manifest|defaults>
+                             Where the review learns what in the repository is product, test
+                             code or not worth reading, which hosts it serves and which
+                             files each plan exercises: `auto` (default: a
+                             `.agentiqa/review.json` at --head that lists app, tester,
+                             ignored, hosts or routeFiles is used as written, else the
+                             survey), `survey` (the review model works it out from the plans
+                             and the repository, two extra model calls), `manifest`
+                             (`.agentiqa/review.json` at --head when it lists app, tester,
+                             ignored, hosts or routeFiles, else the built-in defaults) or
+                             `defaults`. Overrides AGENTIQA_REVIEW_REPO_MAP. If the survey
+                             fails, the review runs on the manifest source and says so.
+                             Secret files are withheld by file convention and the manifest's
+                             `deny` in every mode.
+  --status <a,b>             `review list`: only proposals in these statuses (proposed,
+                             applied, verified, reopened, reverted, applied_unverifiable,
+                             rejected, accepted).
+  --plan <id>                `review list`: only proposals for this test plan.
+  --revision <n>             `review approve` (required) / `review reject`: the proposal
+                             revision you reviewed, as `review show` / `review list` print
+                             it. A proposal a later review revised is refused
+                             (REVISION_MISMATCH, exit 2); `approve` without it prints the
+                             change and exits 2 (`revision_required`).
+  --accept-weakening         `review approve`: confirm a proposal that weakens the test
+                             (WEAKENS yes in `review list`, "Regression or intended?" in
+                             `review show`) — it loosens what the plan checks and is never
+                             marked verified. Without it such an approve prints the change
+                             and exits 2 (`weakening_requires_confirmation`).
+  --reason <text>            `review reject`: why (up to 500 characters), shown on the
+                             proposal.
+  --price <in>/<out>         `review trace`: also print the dollars of each model pass at
+                             this price, in USD per million input and output tokens (e.g.
+                             2/10). Without it the trace shows tokens only.
+  --json                     Emit the standard JSON envelope on stdout: `review` + `counts`
+                             + `proposals` + `regressions` + `writes`, plus `prIntent` (the
+                             pull-request lookup counts) with GITHUB_TOKEN (review) /
+                             `bundle` (collect) / `setupCheck` (check: one line per
+                             prerequisite, each ok / missing / unchecked; exit 0 all ok, 2
+                             one missing, 3 one not checked) / `proposals` (list) /
+                             `proposal` + `diff` (show) / `proposal` + `plan` (approve) /
+                             `proposal` (reject) / `source` + `trace` (trace). approve and
+                             reject refuse AGENTIQA_SERVICE_KEY with
+                             `service_key_cannot_approve` (exit 2) before any request.
+
+Login flags:
+  --api-url <url>            Control-plane to authenticate against, e.g.
+                             https://s.agentiqa.com. Wins over AGENTIQA_API_URL and over the
+                             environment your last login recorded. The environment is stored
+                             WITH the credential, so every later command targets it too,
+                             until the next `agentiqa login` elsewhere or `agentiqa logout`.
+                             Omit it to re-authenticate against the environment you are
+                             already bound to (or, on a fresh machine, the build default).
+  --no-browser               Don't open a browser — print the auth URL to visit instead.
+
+Common flags:
+  --engine <url>             Explicit engine URL; wins over the env-matched default. An
+                             authenticated run defaults to the hosted engine for your API
+                             host (agentiqa.com → engine.agentiqa.com), which persists the
+                             run to your account; pass --embedded to force the local
+                             in-process engine instead. When a remote engine is used,
+                             Playwright/Chromium and ffmpeg are not required locally — it
+                             drives the browser and CLI run artifacts download the
+                             engine-rendered video when available (a local ffmpeg render is
+                             only a fallback). No separate engine token is needed either
+                             way: the short-lived engine credential is minted automatically
+                             from AGENTIQA_SERVICE_KEY, or from your `agentiqa login`
+                             session when no service key is set.
+  --help                     Show this help and exit.
+  --version                  Print the CLI version and exit.
+
+Environment variables:
+  AGENTIQA_CREDENTIAL_SECRET Secret input for project credentials/pool add or update.
+                             --secret-stdin takes precedence. Never printed by default.
+  AGENTIQA_API_URL           Override the Agentiqa control-plane API for this invocation.
+                             When unset, the environment recorded by your last `agentiqa
+                             login` applies (so a staging login keeps every later command on
+                             staging), then the build’s default backend:
+                             https://agentiqa.com for regular installs, while
+                             `agentiqa@staging` builds are baked to https://s.agentiqa.com.
+                             Invocations authenticated with AGENTIQA_SERVICE_KEY ignore the
+                             login-recorded environment — a service key resolves to this
+                             variable or the build default only.
+  AGENTIQA_PROJECT_ID        Project the project-scoped commands (run, plan, runs, labels,
+                             review, project resources) operate in. Sits between --project
+                             (which wins) and the project remembered by `agentiqa project
+                             use`. Use it to pin a project for a shell session or a CI job
+                             without a service key.
+  AGENTIQA_PROJECT           Alias for AGENTIQA_PROJECT_ID. Setting both AGENTIQA_PROJECT_ID
+                             and AGENTIQA_PROJECT to different values is a usage error (exit
+                             2).
+  AGENTIQA_SERVICE_KEY       Service key for unattended runs (CI). Replaces interactive
+                             login and unlocks hosted engine access — no separate engine
+                             token required. It is scoped to ONE project and overrides every
+                             other project selection. Only a project owner can mint one; a
+                             member of a shared project does not need one — `agentiqa login`
+                             plus `agentiqa project use` / --project / AGENTIQA_PROJECT_ID
+                             runs that project directly.
+  AGENTIQA_ENGINE_TOKEN      Optional internal bearer override for hosted engine HTTP +
+                             WebSocket calls. Only needed for internal infra;
+                             customer-facing CI should rely on AGENTIQA_SERVICE_KEY instead.
+  GEMINI_API_KEY             BYOK Gemini key. Needed for the in-process engine (no --engine)
+                             on the default Google model. `agentiqa review` uses it before
+                             the managed key of your login, and `review --evidence` requires
+                             it.
+  AGENTIQA_REVIEW_MODEL      Gemini model id for `agentiqa review` (default:
+                             gemini-4-argon). Review calls think as little as the model
+                             allows (budget 0 first).
+  GITHUB_TOKEN               Optional for `agentiqa review --batch`: a read-only GitHub
+                             token (pull-requests: read; contents: read on a private
+                             repository). With it the review maps each commit of the window
+                             to its pull request and reads the title and description as
+                             intent evidence (bounded, treated as untrusted text), and each
+                             proposed test update cites the pull request. Without it the
+                             review reads commits only. GitHub failures are counted and
+                             never fail the review. GITHUB_API_URL (set by GitHub Actions,
+                             also on GitHub Enterprise) picks the API host.
+  AGENTIQA_REVIEW_THINKING   Thinking setting of `agentiqa review` calls: auto (default:
+                             budget 0, else the lowest level the model accepts), off,
+                             default (no setting sent), a thinking budget, or minimal | low
+                             | medium | high.
+  AGENTIQA_REVIEW_REPO_MAP   Repo map source of `agentiqa review` when --repo-map is not
+                             given: auto (default), survey, manifest or defaults.
+  AGENTIQA_REVIEW_TRACE_HUNKS
+                             Accepted for compatibility; changes nothing, as `review
+                             --trace-hunks`: every review trace carries the diff hunks each
+                             decision rested on. The trace records whether it was set.
+  ANTHROPIC_API_KEY          API key for --model anthropic:<model> (BYOK, Company-only).
+                             Honored only when your account is on the Company plan;
+                             otherwise ignored and managed runs stay on Google.
+  OPENAI_API_KEY             API key for --model openai:<model> (OpenAI, Azure Foundry,
+                             OpenRouter, vLLM, self-hosted; BYOK, Company-only). Honored
+                             only on the Company plan; otherwise ignored.
+  OPENAI_BASE_URL            Optional endpoint override for --model openai:<model> (e.g.
+                             https://<resource>.services.ai.azure.com/openai/v1). Unset uses
+                             OpenAI's default (https://api.openai.com/v1).
+  COORDINATOR_MODEL / DEFAULT_MODEL
+                             Override the coordinator / default model id. With a non-Google
+                             --model and these unset, both default to that model so the full
+                             stack runs on your chosen provider; an explicit value here
+                             always wins.
+  AG_OUTPUT                  Set to "json" to enable JSON output mode globally (equivalent
+                             to --json). Use --format text to override.
+  AG_SHARE                   DEPRECATED no-op (equivalent to --share), still accepted so
+                             existing CI invocations keep working. Public share links were
+                             retired 2026-07 in favor of org-member team access; the run
+                             deep link is always available as runUrl in the JSON envelope
+                             and printed in human output.
+  AGENTIQA_UPDATE_CHECK      Set to "0" to disable the "Update available" check (a cached,
+                             fire-and-forget npm dist-tags lookup; sends no user data). Also
+                             disabled by { "updateCheck": false } in
+                             ~/.agentiqa/config.json.
+  AGENTIQA_SKIP_FFMPEG_DOWNLOAD
+                             Set to "1" to never download ffmpeg. Installing the CLI
+                             downloads nothing; a run that records video locally provisions
+                             ffmpeg on first use unless one is already on PATH. With this
+                             set, a run without ffmpeg simply skips the video and keeps
+                             screenshots and result.json.
+  AGENTIQA_FFMPEG_DIR        Directory the CLI provisions its ffmpeg copy into (default:
+                             ~/.agentiqa/ffmpeg). Point it at a cached path in CI to keep
+                             the one-time download out of every job.
+
+Exit codes:
+  0                          Success — all selected plans passed (or there was nothing to
+                             run).
+  1                          Plan failure — plans executed, at least one failed.
+  2                          Usage / configuration error (bad flags, not authenticated, a
+                             selector that matched no plans, or a project with no plans to
+                             run), a persistent account-state block (quota / org run-cap
+                             exhausted), OR a batch in which one or more plans were skipped
+                             because a credential they sign in with is not stored. Something
+                             that had to run could not, and retrying cannot help.
+  3                          Infra / runtime error (engine unreachable, auth/exchange
+                             failure, a no-verdict batch, or an unexpected internal error) —
+                             a correct, entitled invocation could not reach a verdict, so it
+                             is safe for CI to retry.
+
+JSON output (--json / AG_OUTPUT=json):
+  Every JSON document includes "schemaVersion": 1 at the top level.
+  Success: { "ok": true, "schemaVersion": 1, ...commandFields }
+  Failure: { "ok": false, "schemaVersion": 1, "error": { "code": "...", "message": "..." } }
+  All log lines go to stderr; stdout contains exactly one JSON document.
+  ANSI color is disabled when --json is active or stdout is not a TTY.

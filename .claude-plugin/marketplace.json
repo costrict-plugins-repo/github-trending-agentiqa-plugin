@@ -1,0 +1,17 @@
+{
+  "name": "agentiqa",
+  "owner": {
+    "name": "Agentiqa",
+    "email": "a@agentiqa.com"
+  },
+  "metadata": {
+    "description": "Agentiqa: The Independent Quality Gate for Vertical AI Agents"
+  },
+  "plugins": [
+    {
+      "name": "agentiqa",
+      "source": "./",
+      "description": "Agentiqa for your coding agent: test what it builds before you ship. Free with Community Edition."
+    }
+  ]
+}
